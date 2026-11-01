@@ -24,9 +24,44 @@ function showHistory(){let h=JSON.parse(localStorage.getItem('unitwise-history')
 $('historyItems').onclick=e=>{let h=JSON.parse(localStorage.getItem('unitwise-history')||'[]');let id=e.target.dataset.load,del=e.target.dataset.delete;if(id){products=structuredClone(h.find(s=>s.id===id).products);switchTab(false);render();}if(del){localStorage.setItem('unitwise-history',JSON.stringify(h.filter(s=>s.id!==del)));showHistory();}};
 function switchTab(history){$('history').classList.toggle('hide',!history);$('compare').classList.toggle('hide',history);$('historyTab').className='btn '+(history?'':'secondary');$('compareTab').className='btn '+(history?'secondary':'');if(history)showHistory();}$('historyTab').onclick=()=>switchTab(true);$('compareTab').onclick=()=>switchTab(false);
 $('photo').onchange=()=>{const f=$('photo').files[0];if(f){stopCamera();$('preview').src=URL.createObjectURL(f);$('preview').classList.remove('hide');$('scanStatus').textContent='Ready to read photo';}};
-async function scanFrame(automatic=false){if(scanBusy)return;let f=$('photo').files[0];if(cameraStream&&!f){const v=$('camera'),c=$('frame');if(!v.videoWidth)return;c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0);f=await new Promise(resolve=>c.toBlob(resolve,'image/jpeg',.92));if(!f)return;}if(!f){if(!automatic)alert('Start the camera or choose a photo first.');return;}scanBusy=true;$('scan').disabled=true;$('scanStatus').textContent=automatic?'Checking live camera…':'Reading price tags…';try{if(!window.Tesseract){await new Promise((resolve,reject)=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';s.onload=resolve;s.onerror=reject;document.head.appendChild(s);});}if(!window.unitwiseWorker)window.unitwiseWorker=await Tesseract.createWorker('eng');const result=await window.unitwiseWorker.recognize(f);const text=result.data.text.trim();const prices=parsePriceTags(text);if(automatic){const normalized=text.replace(/\s+/g,' ').toLowerCase();if(prices.length&&normalized!==lastAutoText&&Date.now()-lastAutoAt>3500){lastAutoText=normalized;lastAutoAt=Date.now();$('ocrText').value=text;$('ocrPanel').classList.remove('hide');$('parse').click();$('scanStatus').textContent='Detected '+prices.length+' price candidate(s) — review and tap Add';}else{$('scanStatus').textContent='Auto-scanning — aim steadily at a price tag';}}else{$('ocrText').value=text;$('ocrPanel').classList.remove('hide');$('parse').click();$('scanStatus').textContent=prices.length?'Found '+prices.length+' price candidate(s) — review and tap Add':text?'Text read, but no clear prices found. Check the recognized text below.':'No readable text found. Try a close-up of one tag.';}}catch(err){$('scanStatus').textContent='Recognition unavailable. Try a manual scan or photo.';console.error(err);}finally{scanBusy=false;$('scan').disabled=false;}}$('scan').onclick=()=>scanFrame(false);
+async function scanFrame(automatic=false){if(scanBusy)return;let f=$('photo').files[0];if(cameraStream&&!f){const v=$('camera'),c=$('frame');if(!v.videoWidth)return;c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0);f=await new Promise(resolve=>c.toBlob(resolve,'image/jpeg',.92));if(!f)return;}if(!f){if(!automatic)alert('Start the camera or choose a photo first.');return;}scanBusy=true;$('scan').disabled=true;$('scanStatus').textContent=automatic?'Checking live camera…':'Reading price tags…';try{if(!window.Tesseract){await new Promise((resolve,reject)=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';s.onload=resolve;s.onerror=reject;document.head.appendChild(s);});}if(!window.unitwiseWorker)window.unitwiseWorker=await Tesseract.createWorker('eng');await window.unitwiseWorker.setParameters({preserve_interword_spaces:'1'});const result=await window.unitwiseWorker.recognize(f);const text=result.data.text.trim();const prices=parsePriceTags(text);if(automatic){const normalized=text.replace(/\s+/g,' ').toLowerCase();if(prices.length&&normalized!==lastAutoText&&Date.now()-lastAutoAt>3500){lastAutoText=normalized;lastAutoAt=Date.now();$('ocrText').value=text;$('ocrPanel').classList.remove('hide');$('parse').click();$('scanStatus').textContent='Detected '+prices.length+' price candidate(s) — review and tap Add';}else{$('scanStatus').textContent='Auto-scanning — aim steadily at a price tag';}}else{$('ocrText').value=text;$('ocrPanel').classList.remove('hide');$('parse').click();$('scanStatus').textContent=prices.length?'Found '+prices.length+' price candidate(s) — review and tap Add':text?'Text read, but no clear prices found. Check the recognized text below.':'No readable text found. Try a close-up of one tag.';}}catch(err){$('scanStatus').textContent='Recognition unavailable. Try a manual scan or photo.';console.error(err);}finally{scanBusy=false;$('scan').disabled=false;}}$('scan').onclick=()=>scanFrame(false);
 function parsePriceTags(text){
-  const lines=text.replace(/\u00a0/g,' ').split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+  const lines=text.replace(/\u00a0/g,' ').replace(/(^|\s)[sS](?=\s*\d+[.,]\s*\d{2})/g,'$1$$').split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+  const found=[];
+  const unitPattern=/(\d+(?:\.\d+)?)\s*(fl\.?\s*oz\.?|fluid\s*ounces?|ounces?|oz\.?|pounds?|lbs?\.?|kilograms?|kg|grams?|g|milliliters?|ml|litres?|liters?|l|gallons?|gal|count|ct|pk)\b/i;
+  function quantity(line){
+    const m=line.match(unitPattern);if(!m)return null;
+    const u=m[2].toLowerCase().replace(/[.\s]/g,'');
+    const unit=/^(fl|fluid)/.test(u)?'fl oz':/^(oz|ounce)/.test(u)?'oz':/^(lb|pound)/.test(u)?'lb':/^(kg|kilogram)/.test(u)?'kg':/^(g|gram)$/.test(u)||u==='grams'?'g':/^(ml|milliliter)/.test(u)?'ml':/^(l|liter|litre)$/.test(u)||/^(liters|litres)$/.test(u)?'L':/^(gal|gallon)/.test(u)?'gal':'count';
+    return {quantity:m[1],unit};
+  }
+  function money(line){
+    if(/\b(unit\s*price|per|save|savings|was|regular|reg\.?|coupon|expires?)\b|\/\s*(?:oz|lb|kg|g|ml|l|ct|each)\b/i.test(line))return [];
+    if(/\b\d+\s*(?:for|\/)\s*\$?\s*\d/i.test(line))return [];
+    return [...line.matchAll(/(?:\$\s*)?(\d{1,4})\s*[.,]\s*(\d{2})(?!\d)/g)]
+      .filter(m=>!/^\s*(?:fl\.?\s*oz|oz|lbs?|kg|g|ml|l|ct)\b/i.test(line.slice(m.index+m[0].length)))
+      .map(m=>({price:m[1]+'.'+m[2],index:m.index}));
+  }
+  for(let i=0;i<lines.length;i++){
+    const prices=money(lines[i]);if(!prices.length)continue;
+    const context=[lines[i]];
+    for(let j=i-1;j>=Math.max(0,i-2);j--){if(money(lines[j]).length)break;context.push(lines[j]);}
+    if(lines[i+1]&&!money(lines[i+1]).length&&quantity(lines[i+1]))context.push(lines[i+1]);
+    // Plain OCR loses column positions. Leave sizes blank if pairing is uncertain.
+    const sizeCount=context.reduce((n,l)=>n+[...l.matchAll(new RegExp(unitPattern.source,'gi'))].length,0);
+    const ambiguous=prices.length>1||sizeCount>1;
+    const q=ambiguous?null:context.map(quantity).find(Boolean);
+    for(const p of prices){
+      let name=prices.length===1?lines[i].slice(0,p.index).replace(/\$\s*$/,'').trim():'';
+      if(!/[a-z]{2}/i.test(name))name=context.slice(1).find(l=>/[a-z]{2}/i.test(l)&&!quantity(l)&&!/\b(unit|price|save|per)\b/i.test(l))||'Scanned product';
+      found.push({name:name.slice(0,70),price:p.price,quantity:q?.quantity||'',unit:q?.unit||'oz',line:lines[i]});
+    }
+  }
+  return found;
+}
+$('parse').onclick=()=>{const matches=parsePriceTags($('ocrText').value);const el=$('candidates');el.innerHTML=matches.length?matches.map((m,i)=>'<div class="item"><div class="row"><div><strong>$'+safe(m.price)+'</strong><div class="muted">'+safe(m.name)+' · '+(m.quantity?safe(m.quantity)+' '+safe(m.unit):'Verify product and enter package size')+'</div><div class="muted">'+safe(m.line)+'</div></div><button class="btn secondary" data-candidate="'+i+'">Add</button></div></div>').join(''):'No clear prices found. Check the text, use a close-up of one tag, or add a product manually. Multi-buy offers need manual entry.';el.onclick=e=>{const button=e.target.closest('[data-candidate]');if(!button)return;const m=matches[Number(button.dataset.candidate)];if(!m)return;products.push({id:uid(),name:m.name,price:m.price,quantity:m.quantity,unit:units[m.unit]?m.unit:'oz'});render();};};
+if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});render();
+</script></body></html>).split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
   const found=[];
   const unitPattern=/(\d+(?:\.\d+)?)\s*(fl\.?\s*oz\.?|fluid\s*ounces?|ounces?|oz\.?|pounds?|lbs?\.?|kilograms?|kg|grams?|g|milliliters?|ml|litres?|liters?|l|gallons?|gal|count|ct|pk)\b/i;
   function quantity(line){
